@@ -98,6 +98,10 @@ outputs:
       - files:
           source:
             - test
+            # needed by test/test_c_demo.py (builds ufcx + the C demo with CMake)
+            - cmake/
+            - demo/c/
+            - ffcx/codegeneration/ufcx.h
         requirements:
           run:
             - python ${{ python_min }}.*
@@ -107,6 +111,8 @@ outputs:
             - sympy
             - pygraphviz
             - ${{ compiler("c") }}
+            - cmake
+            - make
         script:
           - python -m pytest -v -k "not bilinear" test
 
