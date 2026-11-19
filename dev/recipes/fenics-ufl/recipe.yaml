@@ -1,0 +1,59 @@
+schema_version: 1
+
+# Development build of UFL from git.
+# Adapted from https://github.com/conda-forge/fenics-ufl-feedstock
+# DEV_UFL_VERSION / DEV_UFL_REV are set by dev/prepare.py in CI.
+
+context:
+  name: fenics-ufl
+  version: ${{ env.get("DEV_UFL_VERSION", default="0.0.0.dev0") }}
+  rev: ${{ env.get("DEV_UFL_REV", default="main") }}
+  # basix/dolfinx dev builds are abi3 for Python >=3.12 only (3.11 is skipped)
+  python_min: "3.12"
+
+package:
+  name: ${{ name|lower }}
+  version: ${{ version }}
+
+source:
+  git: https://github.com/FEniCS/ufl.git
+  rev: ${{ rev }}
+
+build:
+  number: 0
+  noarch: python
+  script: ${{ PYTHON }} -m pip install --no-deps -vv .
+
+requirements:
+  host:
+    - python ${{ python_min }}.*
+    - pip
+    - setuptools >=77.0.3
+    - wheel
+  run:
+    - python >=${{ python_min }}
+    - numpy
+
+tests:
+  - python:
+      imports:
+        - ufl
+  - requirements:
+      run:
+        - pip
+        - python ${{ python_min }}.*
+    script:
+      - pip check
+
+about:
+  summary: Unified Form Language (development build from git main)
+  description: |
+    The Unified Form Language (UFL) is a domain specific language
+    for declaration of finite element discretizations of variational forms.
+
+    This is a development build of UFL from the git main branch (${{ rev }}).
+  license: LGPL-3.0-or-later
+  license_file: COPYING.LESSER
+  homepage: https://fenicsproject.org
+  repository: https://github.com/fenics/ufl
+  documentation: https://docs.fenicsproject.org/ufl/main/

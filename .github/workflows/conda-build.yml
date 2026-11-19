@@ -4,9 +4,9 @@
 
 name: Build conda package
 on:
-  push:
-
-  pull_request:
+  # Changed from push/pull_request in the dev fork: the conda-forge upload
+  # cannot work here. Dev builds use build-dev.yml. (A rerender reverts this.)
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}

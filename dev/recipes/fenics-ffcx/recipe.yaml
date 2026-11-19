@@ -1,0 +1,129 @@
+schema_version: 1
+
+# Development build of FFCx from git.
+# Adapted from https://github.com/conda-forge/fenics-ffcx-feedstock
+# DEV_*_VERSION / DEV_FFCX_REV are set by dev/prepare.py in CI.
+
+context:
+  name: fenics-ffcx-ufcx
+  version: ${{ env.get("DEV_FFCX_VERSION", default="0.0.0.dev0") }}
+  rev: ${{ env.get("DEV_FFCX_REV", default="main") }}
+  basix_version: ${{ env.get("DEV_BASIX_VERSION", default="0.0.0.dev0") }}
+  ufl_version: ${{ env.get("DEV_UFL_VERSION", default="0.0.0.dev0") }}
+  # basix/dolfinx dev builds are abi3 for Python >=3.12 only (3.11 is skipped)
+  python_min: "3.12"
+
+recipe:
+  name: ${{ name|lower }}
+  version: ${{ version }}
+
+source:
+  git: https://github.com/FEniCS/ffcx.git
+  rev: ${{ rev }}
+
+build:
+  number: 0
+
+outputs:
+  - package:
+      name: fenics-ufcx
+    build:
+      noarch: generic
+      script: build-ufcx
+    requirements:
+      build:
+        - cmake
+        - ninja
+        - ${{ compiler("c") }}
+        - ${{ stdlib("c") }}
+      host: []
+      run:
+        - if: not win
+          then: __unix
+          else: __win
+      ignore_run_exports:
+        from_package:
+          - ${{ compiler("c") }}
+          - ${{ stdlib("c") }}
+    tests:
+      - package_contents:
+          include:
+            - ufcx.h
+      - script:
+          # rattler-build bug: executes .sh on Windows with .bat
+          # for noarch: generic package
+          file: test-ufcx${{ '.bat' if win else '' }}
+          env:
+            # workaround https://github.com/prefix-dev/rattler-build/issues/2475
+            target_platform: ${{ 'win-64' if win else 'linux-64' }}
+        files:
+          recipe:
+            - test-ufcx/
+        requirements:
+          run:
+            - pkg-config
+            - cmake
+            - ninja
+            - ${{ compiler("cxx") }}
+  - package:
+      name: fenics-ffcx
+    build:
+      noarch: python
+      python:
+        entry_points:
+          - ffcx = ffcx:__main__.main
+      script:
+        file: build-ffcx-py
+    requirements:
+      host:
+        - python ${{ python_min }}.*
+        - pip
+        - setuptools >=62
+        - wheel
+      run:
+        - python >=${{ python_min }}
+        - setuptools >=77.0.3
+        - numpy >=1.21
+        - cffi
+        # dev snapshots are built together: pin exactly
+        - fenics-basix ==${{ basix_version }}
+        - fenics-ufl ==${{ ufl_version }}
+    tests:
+      - python:
+          imports:
+            - ffcx
+          python_version:
+            - ${{ python_min }}.*
+            - "3.14.*"
+      - files:
+          source:
+            - test
+        requirements:
+          run:
+            - python ${{ python_min }}.*
+            - pip
+            - numba
+            - pytest
+            - sympy
+            - pygraphviz
+            - ${{ compiler("c") }}
+        script:
+          - python -m pytest -v -k "not bilinear" test
+
+about:
+  summary: The FEniCSx Form Compiler (development build from git main)
+  description: |
+    FFCx is a new version of the FEniCS Form Compiler.
+    It is being actively developed and is compatible with DOLFINx.
+
+    FFCx is a compiler for finite element variational forms.
+    From a high-level description of the form in the Unified Form Language (UFL),
+    it generates efficient low-level C code that can be used to assemble the corresponding discrete operator (tensor).
+    In particular, a bilinear form may be assembled into a matrix and a linear form may be assembled into a vector.
+    FFCx may be used either from the command line (by invoking the ffcx command) or as a Python module (import ffcx).
+  license: LGPL-3.0-or-later
+  license_file: COPYING.LESSER
+  homepage: https://fenicsproject.org
+  repository: https://github.com/fenics/ffcx
+  documentation: https://docs.fenicsproject.org/ffcx/main/
+

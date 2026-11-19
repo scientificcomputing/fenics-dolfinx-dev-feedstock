@@ -24,6 +24,12 @@
 
 *.pyc
 
+# Development builds (not managed by conda-smithy)
+!/dev/**
+!/.github/**
+/local-channel
+__pycache__/
+
 # Rattler-build's artifacts are in `output` when not specifying anything.
 /output
 # Pixi's configuration

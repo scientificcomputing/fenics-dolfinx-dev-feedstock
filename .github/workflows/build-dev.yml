@@ -1,0 +1,253 @@
+# Build development snapshots of the FEniCSx stack (ufl, basix, ffcx, dolfinx)
+# from their git main branches and upload them to an anaconda.org channel.
+#
+# Required repository settings:
+#   secret   ANACONDA_API_TOKEN  anaconda.org token with upload rights to the channel
+#   variable ANACONDA_CHANNEL    channel to upload to (default: the repository owner)
+#
+# See dev/README.md.
+name: Build dev packages
+
+on:
+  workflow_dispatch:
+    inputs:
+      dolfinx_ref:
+        description: "FEniCS/dolfinx branch, tag or commit"
+        default: main
+      ffcx_ref:
+        description: "FEniCS/ffcx branch, tag or commit"
+        default: main
+      basix_ref:
+        description: "FEniCS/basix branch, tag or commit"
+        default: main
+      ufl_ref:
+        description: "FEniCS/ufl branch, tag or commit"
+        default: main
+      upload:
+        description: "Upload packages to anaconda.org"
+        type: boolean
+        default: true
+
+# One run at a time, so two runs never pick the same .devN version.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  ANACONDA_CHANNEL: ${{ vars.ANACONDA_CHANNEL || github.repository_owner }}
+  RATTLER_BUILD_COLOR: always
+  RATTLER_BUILD_ENABLE_GITHUB_INTEGRATION: "true"
+  # Variant file used for the noarch packages (ufl, ffcx).
+  NOARCH_CONFIG: .ci_support/linux_64_mpimpichpython3.12.____cpythonscalarreal.yaml
+
+jobs:
+  prepare:
+    name: Resolve versions
+    runs-on: ubuntu-latest
+    outputs:
+      ufl_version: ${{ steps.prepare.outputs.ufl_version }}
+      ufl_rev: ${{ steps.prepare.outputs.ufl_rev }}
+      basix_version: ${{ steps.prepare.outputs.basix_version }}
+      basix_rev: ${{ steps.prepare.outputs.basix_rev }}
+      ffcx_version: ${{ steps.prepare.outputs.ffcx_version }}
+      ffcx_rev: ${{ steps.prepare.outputs.ffcx_rev }}
+      dolfinx_version: ${{ steps.prepare.outputs.dolfinx_version }}
+      dolfinx_rev: ${{ steps.prepare.outputs.dolfinx_rev }}
+      basix_matrix: ${{ steps.prepare.outputs.basix_matrix }}
+      dolfinx_matrix: ${{ steps.prepare.outputs.dolfinx_matrix }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - id: prepare
+        env:
+          DOLFINX_REF: ${{ inputs.dolfinx_ref }}
+          FFCX_REF: ${{ inputs.ffcx_ref }}
+          BASIX_REF: ${{ inputs.basix_ref }}
+          UFL_REF: ${{ inputs.ufl_ref }}
+        run: >
+          python dev/prepare.py
+          --channel "$ANACONDA_CHANNEL"
+          --dolfinx-ref "$DOLFINX_REF"
+          --ffcx-ref "$FFCX_REF"
+          --basix-ref "$BASIX_REF"
+          --ufl-ref "$UFL_REF"
+
+  ufl:
+    name: fenics-ufl
+    needs: prepare
+    runs-on: ubuntu-latest
+    env: &dev-env
+      DEV_UFL_VERSION: ${{ needs.prepare.outputs.ufl_version }}
+      DEV_UFL_REV: ${{ needs.prepare.outputs.ufl_rev }}
+      DEV_BASIX_VERSION: ${{ needs.prepare.outputs.basix_version }}
+      DEV_BASIX_REV: ${{ needs.prepare.outputs.basix_rev }}
+      DEV_FFCX_VERSION: ${{ needs.prepare.outputs.ffcx_version }}
+      DEV_FFCX_REV: ${{ needs.prepare.outputs.ffcx_rev }}
+      DEV_DOLFINX_VERSION: ${{ needs.prepare.outputs.dolfinx_version }}
+      DEV_DOLFINX_REV: ${{ needs.prepare.outputs.dolfinx_rev }}
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-name: build
+          create-args: rattler-build rattler-index
+          init-shell: bash
+      - run: dev/build.sh dev/recipes/fenics-ufl "$NOARCH_CONFIG"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deps-ufl
+          path: output/*/*.conda
+          if-no-files-found: error
+
+  basix:
+    name: fenics-basix ${{ matrix.config }}
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.basix_matrix) }}
+    env: *dev-env
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Hide Homebrew from the build
+        if: runner.os == 'macOS'
+        run: dev/hide-homebrew.sh
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-name: build
+          create-args: rattler-build rattler-index
+          init-shell: bash
+      - run: >
+          dev/build.sh dev/recipes/fenics-basix
+          ".ci_support/${{ matrix.config }}.yaml"
+          -m dev/variants/basix.yaml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deps-basix-${{ matrix.config }}
+          path: output/*/*.conda
+          if-no-files-found: error
+
+  ffcx:
+    name: fenics-ffcx
+    needs: [prepare, ufl, basix]
+    runs-on: ubuntu-latest
+    env: *dev-env
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: deps-*
+          path: local-channel
+          merge-multiple: true
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-name: build
+          create-args: rattler-build rattler-index
+          init-shell: bash
+      - run: dev/build.sh dev/recipes/fenics-ffcx "$NOARCH_CONFIG"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deps-ffcx
+          path: output/*/*.conda
+          if-no-files-found: error
+
+  dolfinx:
+    name: fenics-dolfinx ${{ matrix.config }}
+    needs: [prepare, ffcx]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.dolfinx_matrix) }}
+    env: *dev-env
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Install libGL (needed by gmsh in the tests)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -yq libgl1 libglu1-mesa libxrender1 libxcursor1 libxft2 libxinerama1
+      - name: Hide Homebrew from the build
+        if: runner.os == 'macOS'
+        run: dev/hide-homebrew.sh
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: deps-*
+          path: local-channel
+          merge-multiple: true
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-name: build
+          create-args: rattler-build rattler-index
+          init-shell: bash
+      - run: dev/build.sh dev/recipes/fenics-dolfinx ".ci_support/${{ matrix.config }}.yaml"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dolfinx-${{ matrix.config }}
+          path: output/*/*.conda
+          if-no-files-found: error
+
+  # Upload only after every build has succeeded, so the channel never holds
+  # a partial snapshot.
+  upload:
+    name: Upload to anaconda.org
+    needs: [prepare, dolfinx]
+    if: inputs.upload
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: packages
+          merge-multiple: true
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-name: upload
+          create-args: anaconda-client
+          init-shell: bash
+      - name: Upload
+        env:
+          ANACONDA_API_TOKEN: ${{ secrets.ANACONDA_API_TOKEN }}
+        run: |
+          if [[ -z "$ANACONDA_API_TOKEN" ]]; then
+            echo "::error::The ANACONDA_API_TOKEN secret is not set"
+            exit 1
+          fi
+          ls -l packages/*/*.conda
+          # --skip-existing: fenics-basix-nanobind-abi has the same version
+          # in every snapshot and is only uploaded once.
+          anaconda --token "$ANACONDA_API_TOKEN" upload \
+            --user "$ANACONDA_CHANNEL" \
+            --skip-existing \
+            packages/*/*.conda
+      - name: Summary
+        env:
+          DOLFINX_VERSION: ${{ needs.prepare.outputs.dolfinx_version }}
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          ## Uploaded to https://anaconda.org/$ANACONDA_CHANNEL
+
+          \`\`\`bash
+          conda create -n fenicsx-dev -c $ANACONDA_CHANNEL -c conda-forge --strict-channel-priority fenics-dolfinx=$DOLFINX_VERSION mpich
+          \`\`\`
+          EOF
