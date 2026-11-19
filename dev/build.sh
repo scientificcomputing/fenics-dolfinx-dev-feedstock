@@ -25,8 +25,10 @@ if [[ -z "$target_platform" ]]; then
 fi
 
 # Index the local channel; make sure the subdirs we need exist, even if empty.
+# --force: rebuild from scratch, so a rebuilt package that replaced a file of
+# the same name is not listed with the old file's checksum.
 mkdir -p "$local_channel/noarch" "$local_channel/$target_platform"
-rattler-index fs "$local_channel"
+rattler-index fs --force "$local_channel"
 
 env | grep '^DEV_' | sort || true
 
