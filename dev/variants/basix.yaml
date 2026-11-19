@@ -1,0 +1,8 @@
+# Extra variant keys for basix, on top of a dolfinx .ci_support file.
+# Taken from conda-forge/fenics-basix-feedstock .ci_support files.
+libblas:
+  - 3.9.* *netlib
+libcblas:
+  - 3.9.* *netlib
+liblapack:
+  - 3.9.* *netlib
