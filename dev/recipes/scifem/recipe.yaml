@@ -98,14 +98,20 @@ requirements:
       - adios2
 
 tests:
-  - python:
-      python_version:
+  # A script test rather than a `python:` imports test, which cannot set env
+  # vars: importing scifem initialises MPI, which needs UCX_TLS (see below).
+  # (On the oldest supported Python; the pytest test below gets the newest.)
+  - requirements:
+      run:
+        - pip
         - if: build_abi3
-          then: ${{ abi3_python }}.*
-        - "*"
-      imports:
-        - scifem
-      pip_check: true
+          then: python ${{ abi3_python }}.*
+    script:
+      content:
+        - python -c "import scifem"
+        - python -m pip check
+      env:
+        UCX_TLS: self,sm,tcp
   - files:
       source:
         - tests/
@@ -124,6 +130,11 @@ tests:
             - abi3audit $SP_DIR/scifem/_scifem.abi3.so -s -v --assume-minimum-abi3 ${{ abi3_python }}
       env:
         UCX_MEM_EVENTS: "no"
+        # Keep UCX on shared memory and TCP. rattler-build does not pass the
+        # CI environment into tests, so this cannot be set in the workflow.
+        # Otherwise UCX may try the GitHub ARM runner's Azure NIC and
+        # MPI_Init fails: "uct_iface_open(ud_verbs/mana_0:1) failed".
+        UCX_TLS: self,sm,tcp
         MPIEXEC_TIMEOUT: "1250"
         TEST_FILES: tests/test_bcs.py tests/test_interpolation.py tests/test_material_space.py tests/test_real_functionspace.py
 

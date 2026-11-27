@@ -24,6 +24,11 @@ fi
 # "IndexMap preconditions" expects exceptions that are never thrown.
 export CXXFLAGS="${CXXFLAGS} -DNDEBUG"
 
+# Keep UCX on shared memory and TCP; otherwise it may try the GitHub ARM
+# runner's Azure NIC (mana_0) and MPI_Init fails with
+# "uct_iface_open(ud_verbs/mana_0:1) failed: Address not valid".
+export UCX_TLS=self,sm,tcp
+
 export CMAKE_GENERATOR=Ninja
 
 cmake -DCMAKE_BUILD_TYPE=Developer -B build-test/ -S cpp/test/
