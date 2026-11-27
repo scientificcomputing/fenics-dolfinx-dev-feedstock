@@ -1,5 +1,5 @@
 # Build development snapshots of the FEniCSx stack (ufl, basix, ffcx, dolfinx)
-# from their git main branches and upload them to an anaconda.org channel.
+# and scifem from their git main branches and upload them to an anaconda.org channel.
 #
 # Required repository settings:
 #   secret   ANACONDA_API_TOKEN  anaconda.org token with upload rights to the channel
@@ -22,6 +22,9 @@ on:
         default: main
       ufl_ref:
         description: "FEniCS/ufl branch, tag or commit"
+        default: main
+      scifem_ref:
+        description: "scientificcomputing/scifem branch, tag or commit"
         default: main
       upload:
         description: "Upload packages to anaconda.org"
@@ -56,6 +59,8 @@ jobs:
       ffcx_rev: ${{ steps.prepare.outputs.ffcx_rev }}
       dolfinx_version: ${{ steps.prepare.outputs.dolfinx_version }}
       dolfinx_rev: ${{ steps.prepare.outputs.dolfinx_rev }}
+      scifem_version: ${{ steps.prepare.outputs.scifem_version }}
+      scifem_rev: ${{ steps.prepare.outputs.scifem_rev }}
       basix_matrix: ${{ steps.prepare.outputs.basix_matrix }}
       dolfinx_matrix: ${{ steps.prepare.outputs.dolfinx_matrix }}
     steps:
@@ -69,6 +74,7 @@ jobs:
           FFCX_REF: ${{ inputs.ffcx_ref }}
           BASIX_REF: ${{ inputs.basix_ref }}
           UFL_REF: ${{ inputs.ufl_ref }}
+          SCIFEM_REF: ${{ inputs.scifem_ref }}
         run: >
           python dev/prepare.py
           --channel "$ANACONDA_CHANNEL"
@@ -76,6 +82,7 @@ jobs:
           --ffcx-ref "$FFCX_REF"
           --basix-ref "$BASIX_REF"
           --ufl-ref "$UFL_REF"
+          --scifem-ref "$SCIFEM_REF"
 
   ufl:
     name: fenics-ufl
@@ -90,6 +97,8 @@ jobs:
       DEV_FFCX_REV: ${{ needs.prepare.outputs.ffcx_rev }}
       DEV_DOLFINX_VERSION: ${{ needs.prepare.outputs.dolfinx_version }}
       DEV_DOLFINX_REV: ${{ needs.prepare.outputs.dolfinx_rev }}
+      DEV_SCIFEM_VERSION: ${{ needs.prepare.outputs.scifem_version }}
+      DEV_SCIFEM_REV: ${{ needs.prepare.outputs.scifem_rev }}
     defaults:
       run:
         shell: bash -el {0}
@@ -205,11 +214,51 @@ jobs:
           path: output/*/*.conda
           if-no-files-found: error
 
+  # scifem links against libdolfinx, so it is built per dolfinx variant,
+  # against the dolfinx packages of the same variant from this run.
+  scifem:
+    name: scifem ${{ matrix.config }}
+    needs: [prepare, dolfinx]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.dolfinx_matrix) }}
+    env: *dev-env
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Hide Homebrew from the build
+        if: runner.os == 'macOS'
+        run: dev/hide-homebrew.sh
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: deps-*
+          path: local-channel
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: dolfinx-${{ matrix.config }}
+          path: local-channel
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-name: build
+          create-args: rattler-build rattler-index
+          init-shell: bash
+      - run: dev/build.sh dev/recipes/scifem ".ci_support/${{ matrix.config }}.yaml"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scifem-${{ matrix.config }}
+          path: output/*/*.conda
+          if-no-files-found: error
+
   # Upload only after every build has succeeded, so the channel never holds
   # a partial snapshot.
   upload:
     name: Upload to anaconda.org
-    needs: [prepare, dolfinx]
+    needs: [prepare, dolfinx, scifem]
     if: inputs.upload
     runs-on: ubuntu-latest
     defaults:
@@ -248,6 +297,6 @@ jobs:
           ## Uploaded to https://anaconda.org/$ANACONDA_CHANNEL
 
           \`\`\`bash
-          conda create -n fenicsx-dev -c $ANACONDA_CHANNEL -c conda-forge --strict-channel-priority fenics-dolfinx=$DOLFINX_VERSION mpich
+          conda create -n fenicsx-dev -c $ANACONDA_CHANNEL -c conda-forge --strict-channel-priority fenics-dolfinx=$DOLFINX_VERSION scifem mpich
           \`\`\`
           EOF

@@ -1,0 +1,141 @@
+# Development build of scifem from git, linked against the dev DOLFINx.
+# Adapted from https://github.com/conda-forge/scifem-feedstock
+# DEV_*_VERSION / DEV_SCIFEM_REV are set by dev/prepare.py in CI.
+# Windows is not built (the upstream Windows patch/toolchain are dropped).
+context:
+  name: scifem
+  version: ${{ env.get("DEV_SCIFEM_VERSION", default="0.0.0.dev0") }}
+  rev: ${{ env.get("DEV_SCIFEM_REV", default="main") }}
+  # dev snapshots of the FEniCS components are built together: pin exactly
+  basix_version: ${{ env.get("DEV_BASIX_VERSION", default="0.0.0.dev0") }}
+  dolfinx_version: ${{ env.get("DEV_DOLFINX_VERSION", default="0.0.0.dev0") }}
+  abi_version: 2.${{ nanobind_abi }}
+  abi3_python: "3.12"
+  build_abi3: ${{ match(python, abi3_python + ".*") and is_abi3 }}
+  skip_build: ${{ match(python, ">=3.13") and is_abi3 }}
+  abi3_tag: ${{ "cp312" if build_abi3 else "" }}
+
+package:
+  name: ${{ name|lower }}
+  version: ${{ version }}
+
+source:
+  git: https://github.com/scientificcomputing/scifem.git
+  rev: ${{ rev }}
+
+build:
+  number: 0
+  skip:
+    - win
+    - match(python, "<3.12")
+    - skip_build
+  script:
+    file: build.sh
+    env:
+      SKBUILD_BUILD_VERBOSE: "true"
+      SKBUILD_WHEEL_PY_API: ${{ abi3_tag }}
+  python:
+    version_independent: ${{ build_abi3 }}
+
+requirements:
+  build:
+    - ${{ compiler('c') }}
+    - ${{ stdlib('c') }}
+    - ${{ compiler('cxx') }}
+    - cmake
+    - make
+    - pkg-config
+    - if: build_platform != target_platform
+      then:
+        - if: mpi == 'openmpi'
+          then: ${{ mpi }}
+        - cross-python_${{ target_platform }}
+        - python
+        - nanobind
+        - nanobind-abi
+    - fenics-basix-nanobind-abi ${{ abi_version }}.*
+  host:
+    # fenics-libdolfinx's run_exports pins scifem to this exact snapshot
+    - fenics-libbasix ==${{ basix_version }}
+    - fenics-basix ==${{ basix_version }}
+    - fenics-libdolfinx ==${{ dolfinx_version }}
+    - fenics-dolfinx ==${{ dolfinx_version }}
+    - fenics-basix-nanobind-abi ${{ abi_version }}.*
+
+    # place adios2 in host environment to ensure
+    # a compatible set of dependencies is pinned
+    # (usually on hdf5)
+    # run_exports are then ignored because we don't actually need
+    # to pin adios2
+    - adios2 * mpi_${{ mpi }}_*
+
+    - ${{ mpi }}
+    - petsc
+    - petsc * ${{ scalar }}_*
+    - pip
+    - python
+    - if: build_abi3
+      then:
+        - python-abi3
+    - scikit-build-core
+    - nanobind
+    - nanobind-abi
+  run:
+    - python
+    - fenics-basix ==${{ basix_version }}
+    - fenics-dolfinx ==${{ dolfinx_version }}
+    - fenicsx-compat >=0.3.0
+    - adios2 * mpi_${{ mpi }}_*
+    - scipy
+    - if: match(python, "<3.13")
+      then: typing_extensions
+  run_constraints:
+    # require mpi build of h5py
+    - h5py * mpi_${{ mpi }}_*
+  ignore_run_exports:
+    # lose build-time pinning since we don't link libadios
+    from_package:
+      - adios2
+
+tests:
+  - python:
+      python_version:
+        - if: build_abi3
+          then: ${{ abi3_python }}.*
+        - "*"
+      imports:
+        - scifem
+      pip_check: true
+  - files:
+      source:
+        - tests/
+        - pyproject.toml
+    requirements:
+      run:
+        - pytest
+        - petsc4py
+        - abi3audit
+    script:
+      content:
+        - pytest -vs ${TEST_FILES}
+        - mpiexec -n 2 pytest -m "not serial" -vs ${TEST_FILES}
+        - if: build_abi3
+          then:
+            - abi3audit $SP_DIR/scifem/_scifem.abi3.so -s -v --assume-minimum-abi3 ${{ abi3_python }}
+      env:
+        UCX_MEM_EVENTS: "no"
+        MPIEXEC_TIMEOUT: "1250"
+        TEST_FILES: tests/test_bcs.py tests/test_interpolation.py tests/test_material_space.py tests/test_real_functionspace.py
+
+about:
+  summary: Scientific Computing Tools for Finite Element Methods (development build from git main)
+  description: |
+    This package contains a collection of tools for scientific computing with a focus on finite element methods.
+    The tools are written in Python and are intended to be used in conjunction with the dolfinx.
+
+    This is a development build from the git main branch, linked against a development build of DOLFINx.
+  license: MIT
+  license_file: LICENSE
+  homepage: https://scientificcomputing.github.io/scifem
+  repository: https://github.com/scientificcomputing/scifem
+  documentation: https://scientificcomputing.github.io/scifem
