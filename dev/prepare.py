@@ -1,10 +1,11 @@
 """Prepare a development build of the FEniCSx stack.
 
-For each FEniCS component (ufl, basix, ffcx, dolfinx) this script
+For each component (ufl, basix, ffcx, dolfinx, scifem) this script
 
 1. resolves the requested git ref (default: ``main``) to a commit,
 2. reads the upcoming release from ``pyproject.toml`` at that commit
-   (e.g. ``0.12.0.dev0`` -> ``0.12.0``),
+   (``0.12.0.dev0`` -> ``0.12.0``; a plain released version is bumped,
+   ``0.27.1`` -> ``0.27.2``),
 3. picks the next free ``<release>.devN`` version for the package in the
    target anaconda.org channel.
 
@@ -32,11 +33,12 @@ ROOT = Path(__file__).resolve().parent.parent
 
 # Order matters: this is the build order.
 COMPONENTS = {
-    # name: (conda package, pyproject.toml path in the repository)
-    "ufl": ("fenics-ufl", "pyproject.toml"),
-    "basix": ("fenics-basix", "pyproject.toml"),
-    "ffcx": ("fenics-ffcx", "pyproject.toml"),
-    "dolfinx": ("fenics-dolfinx", "python/pyproject.toml"),
+    # name: (GitHub repository, conda package, pyproject.toml path)
+    "ufl": ("FEniCS/ufl", "fenics-ufl", "pyproject.toml"),
+    "basix": ("FEniCS/basix", "fenics-basix", "pyproject.toml"),
+    "ffcx": ("FEniCS/ffcx", "fenics-ffcx", "pyproject.toml"),
+    "dolfinx": ("FEniCS/dolfinx", "fenics-dolfinx", "python/pyproject.toml"),
+    "scifem": ("scientificcomputing/scifem", "scifem", "pyproject.toml"),
 }
 
 # .ci_support variants that are not built.
@@ -65,10 +67,10 @@ def http_get(url: str) -> bytes | None:
 
 
 def resolve_rev(repo: str, ref: str) -> str:
-    """Resolve a branch/tag/commit of github.com/FEniCS/<repo> to a commit sha."""
+    """Resolve a branch/tag/commit of github.com/<repo> to a commit sha."""
     if re.fullmatch(r"[0-9a-f]{40}", ref):
         return ref
-    url = f"https://github.com/FEniCS/{repo}.git"
+    url = f"https://github.com/{repo}.git"
     out = subprocess.run(
         ["git", "ls-remote", url, ref, f"refs/heads/{ref}", f"refs/tags/{ref}^{{}}"],
         check=True,
@@ -88,7 +90,7 @@ def resolve_rev(repo: str, ref: str) -> str:
 
 def upstream_release(repo: str, rev: str, pyproject: str) -> str:
     """Return the release a commit is working towards, e.g. '0.12.0'."""
-    url = f"https://raw.githubusercontent.com/FEniCS/{repo}/{rev}/{pyproject}"
+    url = f"https://raw.githubusercontent.com/{repo}/{rev}/{pyproject}"
     data = http_get(url)
     if data is None:
         raise SystemExit(f"{url} not found")
@@ -97,11 +99,22 @@ def upstream_release(repo: str, rev: str, pyproject: str) -> str:
 
 
 def release_of(version: str) -> str:
-    """Strip pre/dev/post suffixes: '0.12.0.dev0' -> '0.12.0'."""
-    m = re.match(r"\d+(\.\d+)*", version)
+    """The release a source version is working towards.
+
+    A pre-release (dev/alpha/beta/rc) is working towards its release:
+    '0.12.0.dev0' -> '0.12.0'. A plain release version on a development
+    branch (projects that only bump the version when releasing) is
+    working towards the next patch release: '0.27.1' -> '0.27.2'.
+    """
+    m = re.match(r"(\d+(?:\.\d+)*)(.*)$", version)
     if not m:
         raise ValueError(f"Cannot parse version {version!r}")
-    return m.group(0)
+    release, suffix = m.groups()
+    if re.match(r"\.?(dev|a|b|rc)", suffix):
+        return release
+    parts = release.split(".")
+    parts[-1] = str(int(parts[-1]) + 1)
+    return ".".join(parts)
 
 
 def channel_versions(channel: str, package: str) -> list[str]:
@@ -147,21 +160,21 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--channel", required=True, help="anaconda.org channel")
     for name in COMPONENTS:
         parser.add_argument(
-            f"--{name}-ref", default="main", help=f"git ref of FEniCS/{name}"
+            f"--{name}-ref", default="main", help=f"git ref of {COMPONENTS[name][0]}"
         )
     parser.add_argument("--ci-support", type=Path, default=ROOT / ".ci_support")
     args = parser.parse_args(argv)
 
     outputs: dict[str, str] = {}
     rows = []
-    for name, (package, pyproject) in COMPONENTS.items():
+    for name, (repo, package, pyproject) in COMPONENTS.items():
         ref = getattr(args, f"{name}_ref") or "main"
-        rev = resolve_rev(name, ref)
-        release = upstream_release(name, rev, pyproject)
+        rev = resolve_rev(repo, ref)
+        release = upstream_release(repo, rev, pyproject)
         version = next_dev_version(release, channel_versions(args.channel, package))
         outputs[f"{name}_rev"] = rev
         outputs[f"{name}_version"] = version
-        rows.append(f"| {package} | `{version}` | {ref} | FEniCS/{name}@{rev[:10]} |")
+        rows.append(f"| {package} | `{version}` | {ref} | {repo}@{rev[:10]} |")
 
     basix, dolfinx = build_matrices(args.ci_support)
     outputs["basix_matrix"] = json.dumps({"include": basix})
