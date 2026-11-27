@@ -26,4 +26,10 @@ fi
 
 export CMAKE_GENERATOR=Ninja
 
+# The build generates type stubs by importing dolfinx, which initialises MPI.
+# Keep UCX on shared memory and TCP; otherwise it may try the GitHub runner's
+# Azure NIC (mana_0) and MPI_Init fails with
+# "uct_iface_open(ud_verbs/mana_0:1) failed: Address not valid".
+export UCX_TLS=self,sm,tcp
+
 $PYTHON -m pip install -vv --no-deps --no-build-isolation ./python
